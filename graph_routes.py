@@ -18,9 +18,9 @@ class SUMOPTStop:
     Data about a public transport stop in SUMO.
     """
 
-    def __init__(self, name, stop_id):
-        self.name = name
+    def __init__(self, stop_id, name):
         self.id = stop_id
+        self.name = name
 
 
 class SUMOBasePTRouteWithStops:
@@ -113,6 +113,22 @@ class CirculationRunElement(CirculationElement):
         self.line_no = line_no
         self.run = route_with_stops.offset_by(time_offset)
 
+    def get_stop_from(self):
+        """
+        Get the stop where this circulation run starts.
+        :return: Starting stop
+        :rtype: SUMOPTStop
+        """
+        return self.run.stop_from
+
+    def get_time_from(self):
+        """
+        Get the time at which this circulation run starts.
+        :return: Starting time
+        :rtype: datetime
+        """
+        return self.run.time_from
+
 
 class FinalStopElement(CirculationElement):
     pass
@@ -167,7 +183,8 @@ def collect_runs_by_starting_points(all_runs):
     :type all_runs: list[CirculationRunElement]
     :return:
     """
-    route_dict = defaultdict(dict)
+    # We need the second level of the route dict to be sorted according to departure times
+    run_dict = defaultdict(SortedDict)
     # Loop over all CirculationRunElements in `all_runs` and reorganise them by the "from" stops.
     for cre in all_runs:
         # A single run from the starting stop `sfrom` at `tfrom` to a final stop `sfinal` at `tfinal`.
@@ -175,18 +192,14 @@ def collect_runs_by_starting_points(all_runs):
         # listed in `stops`.
         # Every stop is represented as a tuple (id,name).
         # Times are represented as seconds since midnight
-        if tfinal > 95000:
-            # print('   skipped')
-            continue
-        print(f'GTFS run {run_id}:')
+        # if tfinal > 95000:
+        #     # print('   skipped')
+        #     continue
+        print(f'GTFS run {cre.line_no}:')
         # Stop sequence ordered by stop time
         stop_seq = []
-        for scheduled_time in sorted(stops):
-            stop_tuple = stops[scheduled_time]
-            stop_id, stop_name = stop_tuple
-            stop_datetime = datetime.fromtimestamp(scheduled_time)
-            stop_seq.append((stop_id, stop_name, stop_datetime))
-            print(f'-- {stop_name:20s}: {stop_datetime.time()}')
+        for stop_time, stop in cre.run.route_stops.items():
+            print(f' -- {stop.name:20s}: {stop_time.time()}')
         # stop_list = stop_seq.keys()
         # time_list = stop_seq.values()
         # stop_list = []
@@ -202,29 +215,30 @@ def collect_runs_by_starting_points(all_runs):
         # graph_routes.append(graph_run_data)
         # ax.plot(time_list, stop_list, linewidth=0.5, yunits=line_y_units)
         # Get the name of the starting stop of this run
-        starting_stop_name = cre.get_stop_from_name()  # sfrom[1]  # sfrom[0] would be stop id
+        starting_stop_name = cre.get_stop_from().name  # sfrom[1]  # sfrom[0] would be stop id
         # Convert the starting timestamp to a datetime
         # TODO: This is probably the same as the timestamp of the first element in `stop_seq`
-        datetime_from = datetime.fromtimestamp(tfrom)
+        datetime_from = cre.get_time_from()
         # Enter the run into the collection of runs that start at `starting_stop_name` as a run that starts at
-        # `datetime_from` Note that the route_dict[starting_stop_name] is (a) not build starting from the smallest
+        # `datetime_from` Note that the run_dict[starting_stop_name] is (a) not build starting from the smallest
         # timestamp, (b) implemented as a dictionary so the iteration over it is not guaranteed to occur in the same
-        # order as was the order of insering the keys. We will make sure that routes are sorted by their departure
+        # order as was the order of inserting the keys. We will make sure that routes are sorted by their departure
         # times by switching to OderedDict below.
-        route_dict[starting_stop_name][datetime_from] = (stop_seq, [route_id])
+        run_dict[starting_stop_name][datetime_from] = (stop_seq, [cre.line_no])
+        print(f' ** added as run ({starting_stop_name}, {datetime_from})\n')
 
-    # Sort `route_dict` dictionary entries for every key and store them in that sorted order.
+    # Sort `run_dict` dictionary entries for every key and store them in that sorted order.
     # For every starting point (first-level key) we order the particular runs from that starting point by the
-    # departure time and put them into an OderderDict instance.
-    for key, val in route_dict.items():
-        # Need to maintain the order of keys
-        sorted_val = SortedDict()
-        for k in val.keys():
-            sorted_val[k] = val[k]
-        # Replace the route_dict entry
-        route_dict[key] = sorted_val
+    # departure time and put them into an SortedDict instance.
+    # for key, val in run_dict.items():
+    #    # Need to maintain the order of keys
+    #    sorted_val = SortedDict()
+    #    for k in val.keys():
+    #        sorted_val[k] = val[k]
+    #    # Replace the run_dict entry
+    #    run_dict[key] = sorted_val
 
-    return route_dict
+    return run_dict
 
 
 def connect_runs(route_dict):
@@ -609,7 +623,7 @@ def main():
             # ... get the route prescribed for this vehicle and its stops
             srws = routes[veh.route]
             # print(f'route {veh.route} from {stop_from[1]:20s}:{from_time} to {stop_to[1]:20s}:{to_time}')
-            print(f'route {veh.route} from {srws.stop_from.name}:{srws.time_from} to {srws.stop_to.name}:{srws.time_to}')
+            print(f'-- route {veh.route} from {srws.stop_from.name}:{srws.time_from} to {srws.stop_to.name}:{srws.time_to}')
             # Time offset of this run. The time shall be added to the times of the SUMO route
             offset = int(veh.depart)
             # Create a circulation run element that is based on this SUMO vehicle route offset in time
@@ -623,7 +637,8 @@ def main():
     # make it a list
     graph_stop_list = ['Cínová', 'Malesice', 'Křimice', 'CAN Husova', 'Hlavní nádraží', 'Ústřední hřbitov']
 
-    # Create a collection of routes sorted by their starting time and indexed by their starting stop.
+    # Create a collection of runs indexed by their starting stop and for each starting stop sorted by
+    # their starting time.
     rsbt = collect_runs_by_starting_points(line_runs)
     # Connect runs into the longest possible route
     rsbt = connect_runs(rsbt)
