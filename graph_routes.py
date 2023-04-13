@@ -23,9 +23,11 @@ class SUMOPTStop:
         self.id = stop_id
 
 
-class SUMOPTRouteWithStops:
+class SUMOBasePTRouteWithStops:
     """
-    Holds data for a single route services by a PT vehicle.
+    Holds data for a single base route serviced by a PT vehicle.
+    Base routes are routes that are virtual, they always start at midnight and are supposed to be
+    converted into real routes by applying a concrete offset using `offset_by()` method.
     """
 
     def __init__(self, stops, route_id):
@@ -52,13 +54,44 @@ class SUMOPTRouteWithStops:
 
     def offset_by(self, time_offset):
         """
-        Return a copy of the current route with stops where the stop times are shifted in time.
+        Return a copy of the current basic route with stops where the stop times are shifted in time.
+        This will create a `SUMOConcretePTRouteWithStops` instance.
         :param time_offset: Time offset in seconds to add to the master stop times
         :return: A route with stops moved in time.
+        :rtype: SUMOConcretePTRouteWithStops
         """
         td = timedelta(seconds=time_offset)
-        stops = {stop_time + td: self.route_stops[stop_time] for stop_time in self.route_stops}
-        return SUMOPTRouteWithStops(stops, self.sumo_route_id)
+        stops = OrderedDict((stop_time + td, self.route_stops[stop_time]) for stop_time in self.route_stops)
+        return SUMOConcretePTRouteWithStops(stops, self.sumo_route_id)
+
+
+class SUMOConcretePTRouteWithStops:
+    """
+    Holds data for a single base route serviced by a PT vehicle.
+    Base routes are routes that are virtual, they always start at midnight and are supposed to be
+    converted into real routes by applying a concrete offset using `offset_by()` method.
+    """
+
+    def __init__(self, stops, route_id):
+        """
+        Instantiate a new PT vehicle route.
+        The element contains time-mapped stops visited during this run and its SUMO route ID.
+        :param stops: Dictionary of stops indexed by arrival time
+        :type stops: OrderedDict
+        :param route_id: String ID of SUMO route that corresponds to this run
+        :type route_id: str
+        """
+        self.route_stops = stops
+        # Calling keys() returns a view, which can be turned into an iterator, but getting the last element of
+        # an iterator may be tricky (cf. *_, last = iterator). So we will stick with a list.
+        skeys = list(stops.keys())
+        t0 = skeys[0]
+        self.time_from = t0
+        self.stop_from = stops[t0]
+        t1 = skeys[-1]
+        self.time_to = t1
+        self.stop_to = stops[t1]
+        self.sumo_route_id = route_id
 
 
 class CirculationElement:
@@ -74,7 +107,7 @@ class CirculationRunElement(CirculationElement):
         """
         Create a single circulation run that is based on a time-offset SUMO route with stops.
         :param line_no: Line number
-        :param route_with_stops: Basic SUMO PT vehicle route with its stops, originating at time=0.
+        :param route_with_stops: Basic SUMO PT vehicle route with its stops, originating at time=0
         :param time_offset: Time offset of this run in seconds since midnight
         """
         self.line_no = line_no
@@ -129,8 +162,9 @@ def complete_run(all_runs, name_from, min_time_from):
 
 def collect_runs_by_starting_points(all_runs):
     """
-    Create dictionary containing starting points of vehicle runs and runs themselves.
+    Create dictionary of starting points of vehicle runs referring to runs themselves.
     :param all_runs:
+    :type all_runs: list[CirculationRunElement]
     :return:
     """
     route_dict = defaultdict(dict)
@@ -481,7 +515,7 @@ def get_transformed_stop_ids(rts):
 
 
 def main():
-    network = "../plzen_trd_paper.net.xml"
+    network = "plzen_trd_paper.net.xml"
     # parse the net
     net = sumolib.net.readNet(network)
 
@@ -557,7 +591,7 @@ def main():
             #     estr = " ".join(eidlist)
             #     print(f'      found path: "{estr}"')
             #     edges += eidlist
-            routes[r.id] = SUMOPTRouteWithStops(route_stops, r.id)
+            routes[r.id] = SUMOBasePTRouteWithStops(route_stops, r.id)
             # route_edges[r.id] = edges
         except KeyError as e:
             print('No element', e)
