@@ -127,3 +127,20 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# JetBrains
+.idea/
+
+# Working directories for gtfs2py
+fcd/
+input/
+resources/
+
+# Ignored extensions
+*.bak
+*.zip
+*.pdf
+*.xml
+
+# Ignored extensions
+attic/
